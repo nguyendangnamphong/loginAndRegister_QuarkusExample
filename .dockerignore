@@ -1,0 +1,5 @@
+!target/quarkus-app/*
+!target/lib/*
+!target/*-runner.jar
+!target/classes/META-INF/resources/*
+src/

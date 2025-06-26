@@ -1,0 +1,9 @@
+FROM registry.access.redhat.com/ubi8-minimal
+WORKDIR /work/
+COPY --chown=1001:0 target/*-runner /work/application
+COPY --chown=1001:0 target/classes/META-INF/resources/* /work/META-INF/resources/
+RUN chmod 775 /work
+EXPOSE 9090
+USER 1001
+ENTRYPOINT ["/work/application"]
+CMD ["-Dquarkus.http.port=9090"]
