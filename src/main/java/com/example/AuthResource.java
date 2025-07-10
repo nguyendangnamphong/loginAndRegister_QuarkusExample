@@ -133,75 +133,102 @@ public class AuthResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response loginJson(LoginRequest request) {
         try {
-            // Debug bước 1: Kiểm tra request object
             LOG.info("=== LOGIN-JSON DEBUG START ===");
             LOG.info("Request object: " + (request != null ? request.toString() : "NULL"));
 
-            if (request == null) {
-                LOG.error("Request object is null - JSON parsing failed");
-                return Response.status(Response.Status.BAD_REQUEST)
-                        .entity("{\"error\": \"Request object is null - JSON parsing failed\"}")
-                        .build();
-            }
-
-            LOG.info("Username: " + request.username);
-            LOG.info("Password: " + (request.password != null ? "***PROVIDED***" : "NULL"));
-
-            if (request.username == null || request.password == null) {
-                LOG.error("Username or password is null");
+            if (request == null || request.username == null || request.password == null) {
+                LOG.error("Invalid request: null or missing fields");
                 return Response.status(Response.Status.BAD_REQUEST)
                         .entity("{\"error\": \"Username and password are required\"}")
                         .build();
             }
 
-            // Debug bước 2: Tìm user trong database
-            LOG.info("Looking for user: " + request.username);
-            User user = User.findByUsername(request.username);
-            LOG.info("User found: " + (user != null ? "YES" : "NO"));
-
-            if (user != null) {
-                LOG.info("User details - name: " + user.name + ", age: " + user.age);
-
-                // Debug bước 3: Kiểm tra password
-                boolean passwordMatch = BCrypt.checkpw(request.password, user.password);
-                LOG.info("Password match: " + passwordMatch);
-
-                if (passwordMatch) {
-                    LOG.info("=== GENERATING JWT ===");
-
-                    // Debug JWT generation
-                    try {
-                        String token = Jwt.issuer("quarkus-sample")
-                                .subject(request.username)
-                                .upn(request.username)
-                                .groups("user")
-                                .claim(Claims.full_name, user.name)
-                                .claim("age", user.age)
-                                .sign();
-
-                        LOG.info("JWT generated successfully, length: " + token.length());
-                        return Response.ok()
-                                .entity("{\"token\": \"" + token + "\"}")
-                                .build();
-
-                    } catch (Exception jwtException) {
-                        LOG.error("JWT generation failed", jwtException);
-                        return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                                .entity("{\"error\": \"JWT generation failed: " + jwtException.getMessage() + "\"}")
-                                .build();
-                    }
-                }
+            String username = request.username.trim();
+            LOG.info("Trimmed username: " + username);
+            if (username.isEmpty()) {
+                LOG.error("Username is empty after trim");
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("{\"error\": \"Username cannot be empty\"}")
+                        .build();
+            }
+            String trimmedPassword = request.password.trim();
+            LOG.info("Trimmed password length: " + trimmedPassword.length());
+            if (trimmedPassword.isEmpty()) {
+                LOG.error("Password is empty after trim");
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("{\"error\": \"Password cannot be empty\"}")
+                        .build();
             }
 
-            LOG.warn("Authentication failed for user: " + request.username);
-            return Response.status(Response.Status.UNAUTHORIZED)
-                    .entity("{\"error\": \"Invalid username or password\"}")
-                    .build();
+            LOG.info("Querying user by username: " + username);
+            User user = User.findByUsername(username);
+            LOG.info("User found: " + (user != null ? "YES" : "NO"));
+
+            if (user == null) {
+                LOG.warn("Authentication failed: User not found: " + username);
+                return Response.status(Response.Status.UNAUTHORIZED)
+                        .entity("{\"error\": \"Invalid username or password\"}")
+                        .build();
+            }
+
+            String name = user.name != null && !user.name.trim().isEmpty() ? user.name.trim() : "Unknown";
+            Integer age = user.age != null ? user.age : 0;
+            LOG.info("User details - name: " + name + ", age: " + age);
+
+            LOG.info("Checking password with BCrypt, hash: " + user.password);
+            if (user.password == null || !user.password.matches("^\\$2[ab]\\$\\d{2}\\$[./A-Za-z0-9]{53}$")) {
+                LOG.error("Invalid bcrypt hash for user: " + username + ", hash: " + user.password);
+                return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                        .entity("{\"error\": \"Invalid password hash format\"}")
+                        .build();
+            }
+            try {
+                boolean passwordMatch = BCrypt.checkpw(trimmedPassword, user.password);
+                LOG.info("Password match: " + passwordMatch);
+
+                if (!passwordMatch) {
+                    LOG.warn("Authentication failed: Invalid password for user: " + username);
+                    return Response.status(Response.Status.UNAUTHORIZED)
+                            .entity("{\"error\": \"Invalid username or password\"}")
+                            .build();
+                }
+            } catch (Exception bcryptException) {
+                LOG.error("BCrypt password check failed: " + bcryptException.getMessage(), bcryptException);
+                return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                        .entity("{\"error\": \"Password verification failed: " + bcryptException.getMessage() + "\"}")
+                        .build();
+            }
+
+            LOG.info("=== GENERATING JWT ===");
+            try {
+                LOG.info("JWT input - issuer: quarkus-sample, subject: " + username + ", name: " + name + ", age: " + age);
+                String token = Jwt.issuer("quarkus-sample")
+                        .subject(username)
+                        .upn(username)
+                        .groups("user")
+                        .claim(Claims.full_name, name)
+                        .claim("age", age.toString())
+                        .sign();
+                LOG.info("JWT generated successfully, length: " + token.length());
+                return Response.ok()
+                        .entity("{\"token\": \"" + token + "\"}")
+                        .build();
+            } catch (StringIndexOutOfBoundsException e) {
+                LOG.error("String index error in JWT generation: " + e.getMessage(), e);
+                return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                        .entity("{\"error\": \"String index error: " + e.getMessage() + "\"}")
+                        .build();
+            } catch (Exception e) {
+                LOG.error("JWT generation failed: " + e.getMessage(), e);
+                return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                        .entity("{\"error\": \"JWT generation failed: " + e.getMessage() + "\"}")
+                        .build();
+            }
 
         } catch (Exception e) {
-            LOG.error("Unexpected error in loginJson", e);
+            LOG.error("Unexpected error in loginJson: " + e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity("{\"error\": \"Unexpected error: " + e.getClass().getSimpleName() + " - " + e.getMessage() + "\"}")
+                    .entity("{\"error\": \"Unexpected error: " + e.getMessage() + "\"}")
                     .build();
         } finally {
             LOG.info("=== LOGIN-JSON DEBUG END ===");
